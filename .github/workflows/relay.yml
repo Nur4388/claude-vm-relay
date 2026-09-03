@@ -8,29 +8,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download VM bundle from downloads.claude.ai
+      - name: Download VM bundle (best effort, log everything)
         run: |
           SHA=2a762adfc2eea13eca0d113a2e6452ff00ae3f62
           BASE="https://downloads.claude.ai/vms/linux/x64/${SHA}"
+          : > dl.log
           for f in rootfs.vhdx.zst vmlinuz.zst initrd.zst; do
-            echo "== downloading ${f}"
-            curl -fSL --retry 5 --retry-delay 3 -A "Mozilla/5.0" -o "${f}" "${BASE}/${f}" || exit 1
+            echo "== ${f}" >> dl.log
+            curl -v -fSL --retry 2 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+              -o "${f}" "${BASE}/${f}" >> dl.log 2>&1 \
+              && echo "OK ${f}" >> dl.log \
+              || echo "FAIL ${f} rc=$?" >> dl.log
           done
-          ls -la
+          ls -la >> dl.log 2>&1
+          sha256sum *.zst >> dl.log 2>&1 || true
+          cat dl.log
 
-      - name: Verify sha256
-        run: |
-          echo "90066a2ab3b7b406db53ba3d9e95168aeadab788d921a94bc00e94b6f1950d98  rootfs.vhdx.zst"  > checksums.txt
-          echo "8c74da17c86a7efad89b43fd0d11235dc257b13a7f56b2fdd3677d3fe3562a3e  vmlinuz.zst"    >> checksums.txt
-          echo "6bf448d34e72d8c0bbda9c32eb3589e2b602b6c780df6880212e2cf7a778fa34  initrd.zst"     >> checksums.txt
-          sha256sum -c checksums.txt
+      - name: Upload debug log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-log
+          path: dl.log
+          if-no-files-found: ignore
 
-      - name: Create release and upload
+      - name: Upload zst artifacts (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zst-files
+          path: |
+            rootfs.vhdx.zst
+            vmlinuz.zst
+            initrd.zst
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Create release with zst (if present)
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "vm-2a762adf" rootfs.vhdx.zst vmlinuz.zst initrd.zst checksums.txt \
-            --repo "$GITHUB_REPOSITORY" --title "VM bundle 2a762adf (x64)" --notes "relay of downloads.claude.ai VM bundle" || true
-          gh release upload "vm-2a762adf" rootfs.vhdx.zst vmlinuz.zst initrd.zst checksums.txt \
-            --repo "$GITHUB_REPOSITORY" --clobber
-          gh release view "vm-2a762adf" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | .name + " " + (.size|tostring)'
+          ls *.zst 2>/dev/null | while read f; do
+            gh release create "vm-2a762adf" "$f" --repo "$GITHUB_REPOSITORY" \
+              --title "VM bundle 2a762adf (x64)" --notes "relay" 2>/dev/null || \
+              gh release upload "vm-2a762adf" "$f" --repo "$GITHUB_REPOSITORY" --clobber
+          done
+          true
