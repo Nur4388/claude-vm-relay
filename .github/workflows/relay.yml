@@ -1,6 +1,8 @@
 name: relay-vm-bundle
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 jobs:
   relay:
