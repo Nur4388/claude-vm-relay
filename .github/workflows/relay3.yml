@@ -1,0 +1,46 @@
+name: relay-vm-bundle3
+on:
+  workflow_dispatch:
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download VM bundle (log to dl.log, never hard-fail)
+        run: |
+          SHA=2a762adfc2eea13eca0d113a2e6452ff00ae3f62
+          BASE="https://downloads.claude.ai/vms/linux/x64/${SHA}"
+          : > dl.log
+          for f in rootfs.vhdx.zst vmlinuz.zst initrd.zst; do
+            echo "==== ${f}" >> dl.log
+            curl -fSL --retry 3 --retry-delay 2 -A "Mozilla/5.0" -o "${f}" "${BASE}/${f}" \
+              >> dl.log 2>&1 && echo "OK ${f}" >> dl.log \
+              || echo "FAIL ${f} rc=$? $(date -u +%T)" >> dl.log
+          done
+          ls -la *.zst >> dl.log 2>&1
+          sha256sum *.zst >> dl.log 2>&1 || true
+          cat dl.log
+
+      - name: Upload debug log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-log
+          path: dl.log
+          if-no-files-found: ignore
+
+      - name: Publish release if rootfs present
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -s rootfs.vhdx.zst ]; then
+            gh release create "vm-2a762adf" rootfs.vhdx.zst vmlinuz.zst initrd.zst \
+              --repo "$GITHUB_REPOSITORY" --title "VM bundle 2a762adf (x64)" --notes "relay" 2>&1 | tail -2
+          else
+            echo "no rootfs, skip release"
+          fi
+          gh release view "vm-2a762adf" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | .name+" "+(.size|tostring)' 2>&1 | tail -5
