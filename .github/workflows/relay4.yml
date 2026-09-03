@@ -1,0 +1,38 @@
+name: relay-vm-bundle4
+on:
+  workflow_dispatch:
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download VM bundle
+        run: |
+          SHA=2a762adfc2eea13eca0d113a2e6452ff00ae3f62
+          BASE="https://downloads.claude.ai/vms/linux/x64/${SHA}"
+          for f in rootfs.vhdx.zst vmlinuz.zst initrd.zst; do
+            curl -fSL --retry 3 --retry-delay 2 -A "Mozilla/5.0" -o "${f}" "${BASE}/${f}" || exit 1
+          done
+          sha256sum *.zst
+
+      - name: Publish release (verbose)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          : > publish.log
+          gh release create "vm-2a762adf" rootfs.vhdx.zst vmlinuz.zst initrd.zst \
+            --repo "$GITHUB_REPOSITORY" --title "VM bundle 2a762adf (x64)" --notes "relay" \
+            > publish.log 2>&1
+          echo "create_rc=$?" >> publish.log
+          gh release view "vm-2a762adf" --repo "$GITHUB_REPOSITORY" --json assets >> publish.log 2>&1 || true
+          cat publish.log
+
+      - name: Upload publish log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-log
+          path: publish.log
+          if-no-files-found: ignore
